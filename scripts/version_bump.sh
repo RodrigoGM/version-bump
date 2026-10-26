@@ -225,10 +225,10 @@ pom_set() { # file old new
 # Quoted string literal assigned to a key (Ruby/Python style). KEYRE is a Perl
 # regex with no capture groups.
 lit_get() { # file keyre
-  KEYRE="$2" perl -ne 'if (/$ENV{KEYRE}\s*=\s*([\x27"])([^\x27"]+)\1/) { print "$2\n"; exit }' "$1"
+  KEYRE="$2" perl -ne 'if (/$ENV{KEYRE}\s*=\s*([\x27"])([^\x27"]+)\1/) { print "$2\n"; exit }' -- "$1"
 }
 lit_set() { # file keyre old new   (first occurrence only)
-  KEYRE="$2" OLDV="$3" NEWV="$4" perl -pi -e 'BEGIN{$k=$ENV{KEYRE};$o=$ENV{OLDV};$n=$ENV{NEWV}} if(!$d && s/($k\s*=\s*[\x27"])\Q$o\E([\x27"])/$1$n$2/){$d=1}' "$1"
+  KEYRE="$2" OLDV="$3" NEWV="$4" perl -pi -e 'BEGIN{$k=$ENV{KEYRE};$o=$ENV{OLDV};$n=$ENV{NEWV}} if(!$d && s/($k\s*=\s*[\x27"])\Q$o\E([\x27"])/$1$n$2/){$d=1}' -- "$1"
 }
 
 # ======================================================== current version ===
@@ -667,7 +667,7 @@ version_line_pattern() {
 write_primary() { # old new
   local o="$1" n="$2"
   case "$proj_type" in
-    r) OLDV="$o" NEWV="$n" perl -pi -e 'BEGIN{$o=$ENV{OLDV};$n=$ENV{NEWV}} if(!$d && s/^(Version:\s*)\Q$o\E(\s*)$/$1$n$2/){$d=1}' "$manifest" ;;
+    r) OLDV="$o" NEWV="$n" perl -pi -e 'BEGIN{$o=$ENV{OLDV};$n=$ENV{NEWV}} if(!$d && s/^(Version:\s*)\Q$o\E(\s*)$/$1$n$2/){$d=1}' -- "$manifest" ;;
     rust) toml_table_set "$manifest" "[package]" version "$o" "$n" ;;
     node) json_top_set "$manifest" "$o" "$n" ;;
     php) if [ -z "$tag_derived" ]; then json_top_set "$manifest" "$o" "$n"; fi ;;
@@ -703,7 +703,7 @@ is_bad_also_target() { # path -> reason on stdout if not allowed
 also_replace() { # file old new
   OLDV="$2" NEWV="$3" perl -pi -e '
     BEGIN { $o=$ENV{OLDV}; $n=$ENV{NEWV} }
-    s/(?:(?<![0-9A-Za-z_.+-])|(?<=\bv))\Q$o\E(?![0-9A-Za-z_+-]|\.[0-9A-Za-z])/$n/g' "$1"
+    s/(?:(?<![0-9A-Za-z_.+-])|(?<=\bv))\Q$o\E(?![0-9A-Za-z_+-]|\.[0-9A-Za-z])/$n/g' -- "$1"
 }
 
 go_new_path() { # newver -> module path for that major
@@ -720,7 +720,7 @@ go_rewrite() { # oldpath newpath
   OLDP="$1" NEWP="$2" perl -pi -e 'BEGIN{$o=$ENV{OLDP};$n=$ENV{NEWP}} s{^(module\s+)\Q$o\E(\s*)$}{$1$n$2}' go.mod
   local f
   go_files_with_path | while IFS= read -r f; do
-    OLDP="$1" NEWP="$2" perl -pi -e 'BEGIN{$o=$ENV{OLDP};$n=$ENV{NEWP}} s{"\Q$o\E((?:/[^"]*)?)"}{"$n$1"}g' "$f"
+    OLDP="$1" NEWP="$2" perl -pi -e 'BEGIN{$o=$ENV{OLDP};$n=$ENV{NEWP}} s{"\Q$o\E((?:/[^"]*)?)"}{"$n$1"}g' -- "$f"
   done
 }
 
@@ -861,6 +861,14 @@ apply)
     go_new_path_v="$(go_new_path "$new")"
     if [ "$go_new_path_v" != "$gomod_path" ]; then go_old_path="$gomod_path"; fi
   fi
+
+  # Refuse symlinks and dash-leading names: writes through `>` follow symlinks, and
+  # a name like -Mfoo__init__.py would otherwise be parsed as an option.
+  for t in ${edits[@]+"${edits[@]}"} ${also_files[@]+"${also_files[@]}"} \
+           $( [ -n "$go_old_path" ] && { echo go.mod; go_files_with_path; } ); do
+    case "$t" in -*) die 2 "refusing to write $t: name starts with '-'" ;; esac
+    [ -L "$t" ] && die 2 "refusing to write $t: it is a symlink"
+  done
 
   verb="update"; vrw="rewrite"
   if [ -n "$dry" ]; then echo "DRY RUN -- nothing will be written."; verb="would update"; vrw="would rewrite"; fi
