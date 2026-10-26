@@ -1,6 +1,14 @@
 ---
 name: version-bump
-description: Bump a project's version in whatever format its ecosystem uses (SemVer for Node/Rust, PEP 440 for Python, R's X.Y.Z.9000 development versions, RubyGems, Go module tags and /vN paths, Maven -SNAPSHOT, Composer, plain VERSION files) and update every place that must agree. Use whenever the user asks to bump the version, cut or prepare a release, "what should the next version be" / "patch or minor?", prepare a NEWS/CHANGELOG entry, or says /version-bump, even with no other detail. Computes and writes versions only; never commits, tags or pushes.
+description: >-
+  Bump a project's version in whatever format its ecosystem uses (SemVer for
+  Node/Rust, PEP 440 for Python, R's X.Y.Z.9000 development versions, RubyGems,
+  Go module tags and /vN paths, Maven -SNAPSHOT, Composer, plain VERSION files)
+  and update every place that must agree. Use whenever the user asks to bump the
+  version, cut or prepare a release, "what should the next version be" / "patch
+  or minor?", prepare a NEWS/CHANGELOG entry, or says /version-bump, even with
+  no other detail. Computes and writes versions only; never commits, tags or
+  pushes.
 ---
 
 `scripts/version_bump.sh` does the mechanical, deterministic work: detect the

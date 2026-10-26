@@ -27,7 +27,8 @@ set -euo pipefail
 usage() {
   cat >&2 <<'EOF'
 usage: version_bump.sh scan   [--type=T] [--manifest=P]
-       version_bump.sh apply  <old> <new> [--type=T] [--manifest=P] [--force] [--dry-run] [--also=PATH ...]
+       version_bump.sh apply  <old> <new> [--type=T] [--manifest=P] [--force]
+                              [--dry-run] [--also=PATH ...]
        version_bump.sh verify <old> <new> [--type=T] [--manifest=P]
 types: r rust node python python-setuptools ruby php go maven generic
 EOF
@@ -56,22 +57,26 @@ done
 set -- "${pos[@]+"${pos[@]}"}"
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" \
-  || die 1 "Not inside a git repository ($PWD). cd into the project you want to bump, then re-run."
+  || die 1 "Not inside a git repository ($PWD). cd into the project you" \
+           "want to bump, then re-run."
 cd "$repo_root"
 git rev-parse --verify -q HEAD >/dev/null \
-  || die 1 "This repository has no commits yet; commit once so history-based hints work."
+  || die 1 "This repository has no commits yet; commit once so" \
+           "history-based hints work."
 
 # ============================================================ detection ====
 proj_type=""; manifest=""; scheme=""
 
 detect() {
-  local g
+  local g types="r|rust|node|python|python-setuptools|ruby|php|go|maven|generic"
   if [ -n "$type_override" ]; then
     proj_type="$type_override"
   elif [ -f DESCRIPTION ]; then proj_type="r"
   elif [ -f Cargo.toml ]; then proj_type="rust"
   elif [ -f package.json ]; then proj_type="node"
-  elif [ -f pyproject.toml ] && grep -Eq '^\[(project|tool\.poetry)\]' pyproject.toml; then proj_type="python"
+  elif [ -f pyproject.toml ] \
+      && grep -Eq '^\[(project|tool\.poetry)\]' pyproject.toml; then
+    proj_type="python"
   elif [ -f setup.cfg ] || [ -f setup.py ]; then proj_type="python-setuptools"
   elif [ -f pyproject.toml ]; then proj_type="python"
   elif ls -- *.gemspec >/dev/null 2>&1; then proj_type="ruby"
@@ -80,8 +85,10 @@ detect() {
   elif [ -f pom.xml ]; then proj_type="maven"
   elif [ -f VERSION ]; then proj_type="generic"
   else
-    die 1 "Could not auto-detect a manifest (DESCRIPTION, Cargo.toml, package.json, pyproject.toml, setup.cfg/py, *.gemspec, composer.json, go.mod, pom.xml, VERSION).
-Re-run with --type=<r|rust|node|python|python-setuptools|ruby|php|go|maven|generic> [--manifest=<path>]."
+    die 1 "Could not auto-detect a manifest (DESCRIPTION, Cargo.toml," \
+      "package.json, pyproject.toml, setup.cfg/py, *.gemspec," \
+      "composer.json, go.mod, pom.xml, VERSION)."$'\n'"Re-run with" \
+      "--type=<$types> [--manifest=<path>]."
   fi
   if [ -n "$manifest_override" ]; then
     manifest="$manifest_override"
@@ -91,7 +98,9 @@ Re-run with --type=<r|rust|node|python|python-setuptools|ruby|php|go|maven|gener
       rust) manifest="Cargo.toml" ;;
       node) manifest="package.json" ;;
       python) manifest="pyproject.toml" ;;
-      python-setuptools) if [ -f setup.cfg ]; then manifest="setup.cfg"; else manifest="setup.py"; fi ;;
+      python-setuptools)
+        if [ -f setup.cfg ]; then manifest="setup.cfg"
+        else manifest="setup.py"; fi ;;
       ruby) for g in *.gemspec; do manifest="$g"; break; done ;;
       php) manifest="composer.json" ;;
       go) manifest="go.mod" ;;
@@ -114,10 +123,15 @@ Re-run with --type=<r|rust|node|python|python-setuptools|ruby|php|go|maven|gener
 
 other_manifests() {
   local f out=""
-  for f in DESCRIPTION Cargo.toml package.json pyproject.toml setup.cfg setup.py composer.json go.mod pom.xml VERSION *.gemspec; do
+  for f in DESCRIPTION Cargo.toml package.json pyproject.toml setup.cfg \
+           setup.py composer.json go.mod pom.xml VERSION *.gemspec; do
     [ -f "$f" ] || continue
     [ "$f" = "$manifest" ] && continue
-    case "$proj_type" in python*) case "$f" in pyproject.toml|setup.cfg|setup.py) continue ;; esac ;; esac
+    case "$proj_type" in
+      python*) case "$f" in
+                 pyproject.toml|setup.cfg|setup.py) continue ;;
+               esac ;;
+    esac
     out="$out $f"
   done
   echo "$out"
@@ -235,27 +249,47 @@ lit_set() { # file keyre old new   (first occurrence only)
 ver=""; why=""; ver_file=""; tag_derived=""; tag_prefix=""
 rb_vfile=""; gomod_path=""
 
+set_why() { why="$*"; }
+
 read_version() {
-  ver=""; why=""; tag_derived=""; tag_prefix=""; ver_file="$manifest"; rb_vfile=""
+  ver=""; why=""; tag_derived=""; tag_prefix=""; rb_vfile=""
+  ver_file="$manifest"
   local lit name cand tag
   case "$proj_type" in
     r)
-      ver="$(grep -m1 '^Version:' "$manifest" | sed -E 's/^Version:[[:space:]]*//; s/[[:space:]]*$//')" || true ;;
+      ver="$(grep -m1 '^Version:' "$manifest" \
+        | sed -E 's/^Version:[[:space:]]*//; s/[[:space:]]*$//')" || true ;;
     rust)
       ver="$(toml_table_value "$manifest" "[package]" version)"
-      if [ -z "$ver" ] && grep -Eq '^version\.workspace[[:space:]]*=|^version[[:space:]]*=[[:space:]]*\{[[:space:]]*workspace' "$manifest"; then
-        why="version is inherited from the workspace (version.workspace = true); bump the workspace root manifest with --manifest=<root>/Cargo.toml"
+      if [ -z "$ver" ] && grep -Eq \
+          -e '^version\.workspace[[:space:]]*=' \
+          -e '^version[[:space:]]*=[[:space:]]*\{[[:space:]]*workspace' \
+          "$manifest"; then
+        set_why "version is inherited from the workspace" \
+          "(version.workspace = true); bump the workspace root manifest" \
+          "with --manifest=<root>/Cargo.toml"
       fi ;;
     node)
       ver="$(json_top_value "$manifest")"
-      if [ -z "$ver" ]; then why="no top-level \"version\" key found in $manifest (private package, or JSON not one-key-per-line)"; fi ;;
+      if [ -z "$ver" ]; then
+        set_why "no top-level \"version\" key found in $manifest" \
+          "(private package, or JSON not one-key-per-line)"
+      fi ;;
     python)
       ver="$(toml_table_value "$manifest" "[project] [tool.poetry]" version)"
       if [ -z "$ver" ]; then
-        if grep -Eq 'dynamic[[:space:]]*=.*"version"|^\[tool\.(hatch\.version|setuptools\.dynamic|setuptools_scm)\]|^\[tool\.pdm\.version\]' "$manifest"; then
-          why="the version is dynamic (build backend or VCS tag supplies it); point --manifest= at the file that holds it, or tag the release yourself"
+        if grep -Eq -e 'dynamic[[:space:]]*=.*"version"' \
+            -e '^\[tool\.hatch\.version\]' \
+            -e '^\[tool\.setuptools\.dynamic\]' \
+            -e '^\[tool\.setuptools_scm\]' \
+            -e '^\[tool\.pdm\.version\]' "$manifest"; then
+          set_why "the version is dynamic (build backend or VCS tag" \
+            "supplies it); point --manifest= at the file that holds it," \
+            "or tag the release yourself"
         else
-          why="no static version in $manifest ([project]/[tool.poetry]); if metadata lives in setup.cfg re-run with --type=python-setuptools"
+          set_why "no static version in $manifest ([project]/[tool.poetry]);" \
+            "if metadata lives in setup.cfg re-run with" \
+            "--type=python-setuptools"
         fi
       fi ;;
     python-setuptools)
@@ -263,9 +297,16 @@ read_version() {
         ver="$(lit_get setup.py '(?<![A-Za-z_])version')"
       else
         ver="$(ini_value "$manifest" "[metadata]" version)"
-        case "$ver" in attr:*|file:*) why="setup.cfg version is dynamic ($ver); point --manifest= at the file that holds it"; ver="" ;; esac
+        case "$ver" in
+          attr:*|file:*)
+            set_why "setup.cfg version is dynamic ($ver); point --manifest=" \
+              "at the file that holds it"
+            ver="" ;;
+        esac
       fi
-      if [ -z "$ver" ] && [ -z "$why" ]; then why="no static version found in $manifest"; fi ;;
+      if [ -z "$ver" ] && [ -z "$why" ]; then
+        set_why "no static version found in $manifest"
+      fi ;;
     ruby)
       name="$(basename "$manifest" .gemspec)"
       for cand in "lib/${name//-//}/version.rb" "lib/$name/version.rb"; do
@@ -275,29 +316,53 @@ read_version() {
       if [ -n "$lit" ]; then
         ver="$lit"
       elif [ -n "$rb_vfile" ]; then
-        ver="$(lit_get "$rb_vfile" '(?<![A-Za-z_])VERSION')"; ver_file="$rb_vfile"
+        ver="$(lit_get "$rb_vfile" '(?<![A-Za-z_])VERSION')"
+        ver_file="$rb_vfile"
       fi
-      if [ -z "$ver" ]; then why="no literal version in $manifest, and no lib/<gem>/version.rb with VERSION = \"...\""; fi ;;
+      if [ -z "$ver" ]; then
+        set_why "no literal version in $manifest, and no lib/<gem>/version.rb" \
+          "with VERSION = \"...\""
+      fi ;;
     php)
       ver="$(json_top_value "$manifest")"
       if [ -z "$ver" ]; then
         tag_derived=1
-        tag="$(git describe --tags --abbrev=0 --match '[0-9]*' --match 'v[0-9]*' 2>/dev/null)" || true
-        case "$tag" in v*) tag_prefix="v"; ver="${tag#v}" ;; *) ver="$tag" ;; esac
-        if [ -z "$ver" ]; then why="composer.json has no \"version\" (Composer derives it from VCS tags) and no version tag is reachable from HEAD"; fi
+        tag="$(git describe --tags --abbrev=0 --match '[0-9]*' \
+          --match 'v[0-9]*' 2>/dev/null)" || true
+        case "$tag" in
+          v*) tag_prefix="v"; ver="${tag#v}" ;;
+          *) ver="$tag" ;;
+        esac
+        if [ -z "$ver" ]; then
+          set_why "composer.json has no \"version\" (Composer derives it from" \
+            "VCS tags) and no version tag is reachable from HEAD"
+        fi
       fi ;;
     go)
-      [ "$manifest" = "go.mod" ] || die 3 "go: only a root go.mod is supported (multi-module repos use subdirectory tag prefixes)"
+      [ "$manifest" = "go.mod" ] \
+        || die 3 "go: only a root go.mod is supported (multi-module repos" \
+                 "use subdirectory tag prefixes)"
       tag_derived=1
-      ver="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null)" || true
-      gomod_path="$(awk '/^module[[:space:]]/{print $2; exit}' go.mod | tr -d '"')"
-      if [ -z "$ver" ]; then why="no v* git tag reachable from HEAD; a Go module's version is its tag (first release: pass an explicit version to apply)"; fi ;;
+      ver="$(git describe --tags --abbrev=0 --match 'v[0-9]*' \
+        2>/dev/null)" || true
+      gomod_path="$(awk '/^module[[:space:]]/{print $2; exit}' go.mod \
+        | tr -d '"')"
+      if [ -z "$ver" ]; then
+        set_why "no v* git tag reachable from HEAD; a Go module's version is" \
+          "its tag (first release: pass an explicit version to apply)"
+      fi ;;
     maven)
       ver="$(pom_value "$manifest")"
       if grep -q '<modules>' "$manifest"; then
-        why="multi-module POM: children inherit or reference this version; use 'mvn versions:set -DnewVersion=<new>' instead"
-      elif [ -z "$ver" ]; then why="no project-level <version> in $manifest"
-      else case "$ver" in *'${'*) why="version uses a property ($ver); edit the property by hand" ;; esac
+        set_why "multi-module POM: children inherit or reference this" \
+          "version; use 'mvn versions:set -DnewVersion=<new>' instead"
+      elif [ -z "$ver" ]; then
+        set_why "no project-level <version> in $manifest"
+      else
+        case "$ver" in
+          *'${'*) set_why "version uses a property ($ver);" \
+                    "edit the property by hand" ;;
+        esac
       fi ;;
     generic)
       ver="$(head -1 "$manifest" | tr -d '[:space:]')" || true ;;
@@ -311,7 +376,8 @@ read_version() {
 # kind "check" only validates.
 kinds_for() {
   case "$1" in
-    semver|composer|rubygems|gomod) echo "patch minor major prerelease release" ;;
+    semver|composer|rubygems|gomod)
+      echo "patch minor major prerelease release" ;;
     pep440) echo "patch minor major pre dev release" ;;
     rver) echo "patch minor major dev" ;;
     maven) echo "patch minor major snapshot release" ;;
@@ -323,22 +389,40 @@ RE_SEMVER="^$NUM\\.$NUM\\.$NUM(-([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?\$"
 
 next_semver() {
   local v="$1" k="$2" M m p pre
-  case "$v" in *+*) echo "build metadata (+...) is not supported; pass an explicit version without it"; return 3 ;; esac
-  [[ $v =~ $RE_SEMVER ]] || { echo "'$v' is not canonical SemVer X.Y.Z[-prerelease]"; return 3; }
-  M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"; pre="${BASH_REMATCH[5]}"
+  case "$v" in
+    *+*) echo "build metadata (+...) is not supported;" \
+              "pass an explicit version without it"
+         return 3 ;;
+  esac
+  [[ $v =~ $RE_SEMVER ]] \
+    || { echo "'$v' is not canonical SemVer X.Y.Z[-prerelease]"; return 3; }
+  M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"
+  pre="${BASH_REMATCH[5]}"
   case "$k" in
     check) echo "$v" ;;
     patch|minor|major)
-      if [ -n "$pre" ]; then echo "current version is a pre-release; use 'release' (to $M.$m.$p) or 'prerelease', or pass an explicit version"; return 2; fi
+      if [ -n "$pre" ]; then
+        echo "current version is a pre-release; use 'release' (to $M.$m.$p)" \
+          "or 'prerelease', or pass an explicit version"
+        return 2
+      fi
       case "$k" in
         patch) echo "$M.$m.$((p+1))" ;;
         minor) echo "$M.$((m+1)).0" ;;
         major) echo "$((M+1)).0.0" ;;
       esac ;;
     prerelease)
-      if [ -z "$pre" ]; then echo "not a pre-release; start one by passing an explicit version (e.g. $M.$m.$((p+1))-rc.1)"; return 2; fi
-      if [[ $pre =~ ^(.+)\.([0-9]+)$ ]]; then echo "$M.$m.$p-${BASH_REMATCH[1]}.$((10#${BASH_REMATCH[2]}+1))"
-      else echo "pre-release '$pre' has no trailing numeric identifier (id.N)"; return 2; fi ;;
+      if [ -z "$pre" ]; then
+        echo "not a pre-release; start one by passing an explicit version" \
+          "(e.g. $M.$m.$((p+1))-rc.1)"
+        return 2
+      fi
+      if [[ $pre =~ ^(.+)\.([0-9]+)$ ]]; then
+        echo "$M.$m.$p-${BASH_REMATCH[1]}.$((10#${BASH_REMATCH[2]}+1))"
+      else
+        echo "pre-release '$pre' has no trailing numeric identifier (id.N)"
+        return 2
+      fi ;;
     release)
       if [ -z "$pre" ]; then echo "already a release"; return 2; fi
       echo "$M.$m.$p" ;;
@@ -346,9 +430,11 @@ next_semver() {
   esac
 }
 
-RE_PEP440="^(([0-9]+)!)?$NUM\\.$NUM\\.$NUM((a|b|rc)$NUM)?(\\.post$NUM)?(\\.dev$NUM)?\$"
+RE_PEP440="^(([0-9]+)!)?$NUM\\.$NUM\\.$NUM((a|b|rc)$NUM)?"
+RE_PEP440="$RE_PEP440(\\.post$NUM)?(\\.dev$NUM)?\$"
 
-pep440_hint() { # best-effort normalized spelling, printed only if it is canonical
+# Best-effort normalized spelling, printed only if it is canonical.
+pep440_hint() {
   local h
   h="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E '
     s/^v//
@@ -362,39 +448,69 @@ pep440_hint() { # best-effort normalized spelling, printed only if it is canonic
 
 next_pep440() {
   local v="$1" k="$2" ep M m p pk pn pre post dev h
-  case "$v" in *+*) echo "local version labels (+...) are not allowed in published releases (PEP 440); not supported"; return 3 ;; esac
+  case "$v" in
+    *+*) echo "local version labels (+...) are not allowed in published" \
+              "releases (PEP 440); not supported"
+         return 3 ;;
+  esac
   if ! [[ $v =~ $RE_PEP440 ]]; then
     h="$(pep440_hint "$v")"
     if [ -n "$h" ] && [ "$h" != "$v" ]; then
-      echo "'$v' is valid-looking but not PEP 440 normalized; the normalized spelling is '$h'. Normalize it first (pre-releases are aN/bN/rcN with no separator, e.g. 1.2.0rc1, not 1.2.0-rc.1)"
+      echo "'$v' is valid-looking but not PEP 440 normalized; the normalized" \
+        "spelling is '$h'. Normalize it first (pre-releases are aN/bN/rcN" \
+        "with no separator, e.g. 1.2.0rc1, not 1.2.0-rc.1)"
     else
-      echo "'$v' is not a supported PEP 440 version (need N.N.N[aN|bN|rcN][.postN][.devN], optional epoch 'N!')"
+      echo "'$v' is not a supported PEP 440 version" \
+        "(need N.N.N[aN|bN|rcN][.postN][.devN], optional epoch 'N!')"
     fi
     return 3
   fi
-  ep="${BASH_REMATCH[1]}"; M="${BASH_REMATCH[3]}"; m="${BASH_REMATCH[4]}"; p="${BASH_REMATCH[5]}"
+  ep="${BASH_REMATCH[1]}"; M="${BASH_REMATCH[3]}"; m="${BASH_REMATCH[4]}"
+  p="${BASH_REMATCH[5]}"
   pre="${BASH_REMATCH[6]}"; pk="${BASH_REMATCH[7]}"; pn="${BASH_REMATCH[8]}"
   post="${BASH_REMATCH[9]}"; dev="${BASH_REMATCH[11]}"
   local dn="${BASH_REMATCH[12]}"
   case "$k" in
     check) echo "$v" ;;
     patch|minor|major)
-      if [ -n "$pre" ] || [ -n "$dev" ]; then echo "current version is a pre/dev release; use 'release' (to $ep$M.$m.$p), 'pre' or 'dev', or pass an explicit version"; return 2; fi
+      if [ -n "$pre" ] || [ -n "$dev" ]; then
+        echo "current version is a pre/dev release; use 'release'" \
+          "(to $ep$M.$m.$p), 'pre' or 'dev', or pass an explicit version"
+        return 2
+      fi
       case "$k" in
         patch) echo "$ep$M.$m.$((p+1))" ;;
         minor) echo "$ep$M.$((m+1)).0" ;;
         major) echo "$ep$((M+1)).0.0" ;;
       esac ;;
     pre)
-      if [ -z "$pre" ]; then echo "not an a/b/rc pre-release; start one by passing an explicit version (e.g. $ep$M.$m.$((p+1))rc1)"; return 2; fi
-      if [ -n "$dev" ] || [ -n "$post" ]; then echo "has a .dev/.post segment; bump that first or pass an explicit version"; return 2; fi
+      if [ -z "$pre" ]; then
+        echo "not an a/b/rc pre-release; start one by passing an explicit" \
+          "version (e.g. $ep$M.$m.$((p+1))rc1)"
+        return 2
+      fi
+      if [ -n "$dev" ] || [ -n "$post" ]; then
+        echo "has a .dev/.post segment; bump that first or pass an" \
+          "explicit version"
+        return 2
+      fi
       echo "$ep$M.$m.$p$pk$((10#$pn+1))" ;;
     dev)
-      if [ -z "$dev" ]; then echo "no .devN segment; start one by passing an explicit version (e.g. $ep$M.$m.$p.dev0)"; return 2; fi
+      if [ -z "$dev" ]; then
+        echo "no .devN segment; start one by passing an explicit version" \
+          "(e.g. $ep$M.$m.$p.dev0)"
+        return 2
+      fi
       echo "$ep$M.$m.$p$pre$post.dev$((10#$dn+1))" ;;
     release)
-      if [ -z "$pre" ] && [ -z "$dev" ]; then echo "already a final release"; return 2; fi
-      if [ -n "$post" ]; then echo "post-release: dropping it would go backwards; pass an explicit version"; return 2; fi
+      if [ -z "$pre" ] && [ -z "$dev" ]; then
+        echo "already a final release"; return 2
+      fi
+      if [ -n "$post" ]; then
+        echo "post-release: dropping it would go backwards;" \
+          "pass an explicit version"
+        return 2
+      fi
       echo "$ep$M.$m.$p" ;;
     *) echo "unknown kind '$k'"; return 2 ;;
   esac
@@ -405,16 +521,25 @@ RE_RVER="^$NUM\\.$NUM\\.$NUM(\\.([0-9]+))?\$"
 next_rver() { # mirrors desc::bump_version() / usethis::use_version()
   local v="$1" k="$2" M m p d
   case "$v" in
-    *-*) echo "'$v' uses R's '-' separator (legal in R, but not supported here); use the dotted X.Y.Z[.9000] form"; return 3 ;;
+    *-*) echo "'$v' uses R's '-' separator (legal in R, but not supported" \
+              "here); use the dotted X.Y.Z[.9000] form"
+         return 3 ;;
   esac
-  [[ $v =~ $RE_RVER ]] || { echo "'$v' is not X.Y.Z or X.Y.Z.<dev> (R release versions are three-part; two-part versions are not supported)"; return 3; }
-  M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"; d="${BASH_REMATCH[5]}"
+  [[ $v =~ $RE_RVER ]] || {
+    echo "'$v' is not X.Y.Z or X.Y.Z.<dev> (R release versions are" \
+      "three-part; two-part versions are not supported)"
+    return 3
+  }
+  M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"
+  d="${BASH_REMATCH[5]}"
   case "$k" in
     check) echo "$v" ;;
     patch) echo "$M.$m.$((p+1))" ;;
     minor) echo "$M.$((m+1)).0" ;;
     major) echo "$((M+1)).0.0" ;;
-    dev) if [ -z "$d" ]; then echo "$M.$m.$p.9000"; else echo "$M.$m.$p.$((10#$d+1))"; fi ;;
+    dev)
+      if [ -z "$d" ]; then echo "$M.$m.$p.9000"
+      else echo "$M.$m.$p.$((10#$d+1))"; fi ;;
     *) echo "unknown kind '$k'"; return 2 ;;
   esac
 }
@@ -424,25 +549,46 @@ RE_RUBYGEMS="^$NUM\\.$NUM\\.$NUM(\\.([A-Za-z]+)(([0-9]+)|\\.([0-9]+))?)?\$"
 next_rubygems() {
   local v="$1" k="$2" M m p pre letters att dot
   case "$v" in
-    *-*) echo "'$v': RubyGems rewrites '-' to '.pre.' ('1.2.3-rc1' is '1.2.3.pre.rc1', not SemVer's pre-release); write the dotted form, e.g. 1.2.3.rc1"; return 3 ;;
+    *-*) echo "'$v': RubyGems rewrites '-' to '.pre.' ('1.2.3-rc1' is" \
+              "'1.2.3.pre.rc1', not SemVer's pre-release); write the dotted" \
+              "form, e.g. 1.2.3.rc1"
+         return 3 ;;
   esac
-  [[ $v =~ $RE_RUBYGEMS ]] || { echo "'$v' is not N.N.N[.<letters>[N]] (four numeric segments are not supported)"; return 3; }
+  [[ $v =~ $RE_RUBYGEMS ]] || {
+    echo "'$v' is not N.N.N[.<letters>[N]] (four numeric segments are not" \
+      "supported)"
+    return 3
+  }
   M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"
-  pre="${BASH_REMATCH[4]}"; letters="${BASH_REMATCH[5]}"; att="${BASH_REMATCH[7]}"; dot="${BASH_REMATCH[8]}"
+  pre="${BASH_REMATCH[4]}"; letters="${BASH_REMATCH[5]}"
+  att="${BASH_REMATCH[7]}"; dot="${BASH_REMATCH[8]}"
   case "$k" in
     check) echo "$v" ;;
     patch|minor|major)
-      if [ -n "$pre" ]; then echo "current version is a pre-release (a letter segment); use 'release' (to $M.$m.$p) or 'prerelease', or pass an explicit version"; return 2; fi
+      if [ -n "$pre" ]; then
+        echo "current version is a pre-release (a letter segment);" \
+          "use 'release' (to $M.$m.$p) or 'prerelease', or pass an" \
+          "explicit version"
+        return 2
+      fi
       case "$k" in
         patch) echo "$M.$m.$((p+1))" ;;
         minor) echo "$M.$((m+1)).0" ;;
         major) echo "$((M+1)).0.0" ;;
       esac ;;
     prerelease)
-      if [ -z "$pre" ]; then echo "not a pre-release; start one by passing an explicit version (e.g. $M.$m.$((p+1)).rc1)"; return 2; fi
+      if [ -z "$pre" ]; then
+        echo "not a pre-release; start one by passing an explicit version" \
+          "(e.g. $M.$m.$((p+1)).rc1)"
+        return 2
+      fi
       if [ -n "$att" ]; then echo "$M.$m.$p.$letters$((10#$att+1))"
       elif [ -n "$dot" ]; then echo "$M.$m.$p.$letters.$((10#$dot+1))"
-      else echo "pre-release '$letters' has no number to increment; pass an explicit version (e.g. $M.$m.$p.${letters}1)"; return 2; fi ;;
+      else
+        echo "pre-release '$letters' has no number to increment; pass an" \
+          "explicit version (e.g. $M.$m.$p.${letters}1)"
+        return 2
+      fi ;;
     release)
       if [ -z "$pre" ]; then echo "already a release"; return 2; fi
       echo "$M.$m.$p" ;;
@@ -453,9 +599,16 @@ next_rubygems() {
 RE_GOPSEUDO='-[0-9]{14}-[0-9a-f]{12}$'
 next_gomod() {
   local v="$1" k="$2" r rc=0
-  case "$v" in v*) ;; *) echo "Go module versions start with 'v' (got '$v')"; return 3 ;; esac
-  case "$v" in *+*) echo "'+incompatible'/build metadata is not supported"; return 3 ;; esac
-  if [[ $v =~ $RE_GOPSEUDO ]]; then echo "'$v' is a pseudo-version, not a tagged release"; return 3; fi
+  case "$v" in
+    v*) ;;
+    *) echo "Go module versions start with 'v' (got '$v')"; return 3 ;;
+  esac
+  case "$v" in
+    *+*) echo "'+incompatible'/build metadata is not supported"; return 3 ;;
+  esac
+  if [[ $v =~ $RE_GOPSEUDO ]]; then
+    echo "'$v' is a pseudo-version, not a tagged release"; return 3
+  fi
   r="$(next_semver "${v#v}" "$k")" || rc=$?
   if [ "$rc" -eq 0 ]; then echo "v$r"; else echo "$r"; return "$rc"; fi
 }
@@ -463,12 +616,20 @@ next_gomod() {
 RE_MAVEN="^$NUM\\.$NUM\\.$NUM(-SNAPSHOT)?\$"
 next_maven() {
   local v="$1" k="$2" M m p snap
-  [[ $v =~ $RE_MAVEN ]] || { echo "'$v' is not N.N.N[-SNAPSHOT] (other qualifiers are not supported)"; return 3; }
-  M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"; snap="${BASH_REMATCH[4]}"
+  [[ $v =~ $RE_MAVEN ]] || {
+    echo "'$v' is not N.N.N[-SNAPSHOT] (other qualifiers are not supported)"
+    return 3
+  }
+  M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"; p="${BASH_REMATCH[3]}"
+  snap="${BASH_REMATCH[4]}"
   case "$k" in
     check) echo "$v" ;;
     patch|minor|major)
-      if [ -n "$snap" ]; then echo "current version is a -SNAPSHOT; use 'release' (to $M.$m.$p) or pass an explicit version"; return 2; fi
+      if [ -n "$snap" ]; then
+        echo "current version is a -SNAPSHOT; use 'release' (to $M.$m.$p)" \
+          "or pass an explicit version"
+        return 2
+      fi
       case "$k" in
         patch) echo "$M.$m.$((p+1))" ;;
         minor) echo "$M.$((m+1)).0" ;;
@@ -500,10 +661,12 @@ secondary_locations() {
   case "$proj_type" in
     ruby)
       if [ -n "$rb_vfile" ] && [ "$ver_file" != "$rb_vfile" ]; then
-        v="$(lit_get "$rb_vfile" '(?<![A-Za-z_])VERSION')"; echo "$rb_vfile|$v|e"
+        v="$(lit_get "$rb_vfile" '(?<![A-Za-z_])VERSION')"
+        echo "$rb_vfile|$v|e"
       fi ;;
     python|python-setuptools)
-      { git ls-files -- '*__init__.py' '*__about__.py' '*version.py' 2>/dev/null \
+      { git ls-files -- '*__init__.py' '*__about__.py' '*version.py' \
+          2>/dev/null \
           | grep -Ev '(^|/)(tests?|docs?|examples?|build)/' || true; } \
         | while IFS= read -r f; do
             [ "$f" = "$manifest" ] && continue
@@ -531,6 +694,7 @@ secondary_locations() {
 }
 
 sync_report=""; sync_bad=0
+report() { sync_report="$sync_report$*"$'\n'; }
 # check_sync <expected> <lock_blocks 1|0>
 check_sync() {
   local expected="$1" lock_blocks="$2" secs line f rest v kind maj want have
@@ -541,24 +705,34 @@ check_sync() {
     [ -n "$line" ] || continue
     f="${line%%|*}"; rest="${line#*|}"; v="${rest%%|*}"; kind="${rest#*|}"
     if [ -z "$v" ]; then
-      sync_report="${sync_report}UNPARSEABLE: found $f but could not read a version from it"$'\n'; sync_bad=$((sync_bad+1))
+      report "UNPARSEABLE: found $f but could not read a version from it"
+      sync_bad=$((sync_bad+1))
     elif [ "$v" != "$expected" ]; then
       if [ "$kind" = l ] && [ "$lock_blocks" = 0 ]; then
-        sync_report="${sync_report}NOTE: $f still says \"$v\" -- regenerate it with your package manager"$'\n'
+        report "NOTE: $f still says \"$v\" -- regenerate it with your" \
+          "package manager"
       else
-        sync_report="${sync_report}MISMATCH: $ver_file says \"$expected\" but $f says \"$v\""$'\n'; sync_bad=$((sync_bad+1))
+        report "MISMATCH: $ver_file says \"$expected\" but $f says \"$v\""
+        sync_bad=$((sync_bad+1))
       fi
     else
-      sync_report="${sync_report}OK: $f agrees ($v)"$'\n'
+      report "OK: $f agrees ($v)"
     fi
   done <<< "$secs"
-  if [ "$proj_type" = go ] && [ -n "$gomod_path" ] && [ -n "$expected" ] && [[ $expected != *+* ]]; then
+  if [ "$proj_type" = go ] && [ -n "$gomod_path" ] && [ -n "$expected" ] \
+      && [[ $expected != *+* ]]; then
     maj="${expected#v}"; maj="${maj%%.*}"
     want=""; if [ "$maj" -ge 2 ] 2>/dev/null; then want="/v$maj"; fi
-    have=""; if [[ $gomod_path =~ /v([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -ge 2 ]; then have="/v${BASH_REMATCH[1]}"; fi
+    have=""
+    if [[ $gomod_path =~ /v([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -ge 2 ]; then
+      have="/v${BASH_REMATCH[1]}"
+    fi
     case "$gomod_path" in gopkg.in/*) want="$have" ;; esac
     if [ "$want" != "$have" ]; then
-      sync_report="${sync_report}MISMATCH: go.mod module path \"$gomod_path\" has suffix \"${have:-none}\" but major version ${maj} requires \"${want:-none}\""$'\n'; sync_bad=$((sync_bad+1))
+      report "MISMATCH: go.mod module path \"$gomod_path\" has suffix" \
+        "\"${have:-none}\" but major version ${maj} requires" \
+        "\"${want:-none}\""
+      sync_bad=$((sync_bad+1))
     fi
   fi
   return 0
@@ -569,13 +743,16 @@ excl=(); lockspec=()
 build_excludes() {
   local n
   excl=(); lockspec=()
-  for n in package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml Cargo.lock poetry.lock Gemfile.lock composer.lock go.sum; do
+  for n in package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml \
+           Cargo.lock poetry.lock Gemfile.lock composer.lock go.sum; do
     excl+=(":(exclude,glob)**/$n"); lockspec+=(":(glob)**/$n")
   done
-  for n in NEWS.md CHANGELOG.md CHANGES.md HISTORY.md '*.tar.gz' '*.whl' '*.gem'; do
+  for n in NEWS.md CHANGELOG.md CHANGES.md HISTORY.md '*.tar.gz' '*.whl' \
+           '*.gem'; do
     excl+=(":(exclude,glob)**/$n")
   done
-  for n in node_modules dist build target vendor __pycache__ '*.egg-info' .venv venv .tox; do
+  for n in node_modules dist build target vendor __pycache__ '*.egg-info' \
+           .venv venv .tox; do
     excl+=(":(exclude,glob)**/$n/**")
   done
   if [ "$proj_type" = r ]; then excl+=(':(exclude,glob)man/**'); fi
@@ -603,51 +780,72 @@ skip_list() { # primary + editable secondaries
 # ================================================================ API diff ====
 api_diff() {
   local last_commit="$1" f="" cand
+  local pub_re='^[[:space:]]*pub (fn|struct|enum|trait|const|mod|type) '
   case "$proj_type" in
     r)
-      if [ -n "$last_commit" ] && git cat-file -e "${last_commit}:NAMESPACE" 2>/dev/null; then
+      if [ -n "$last_commit" ] \
+          && git cat-file -e "${last_commit}:NAMESPACE" 2>/dev/null; then
         diff <(git show "${last_commit}:NAMESPACE" | grep '^export(' | sort) \
-             <(grep '^export(' NAMESPACE 2>/dev/null | sort) && echo "(no export changes)" || true
+             <(grep '^export(' NAMESPACE 2>/dev/null | sort) \
+          && echo "(no export changes)" || true
       else
-        echo "(NAMESPACE absent at the comparison point -- treating all current exports as new)"
+        echo "(NAMESPACE absent at the comparison point -- treating all" \
+          "current exports as new)"
         grep '^export(' NAMESPACE 2>/dev/null || echo "(no NAMESPACE file)"
       fi ;;
     rust)
       [ -f src/lib.rs ] && f=src/lib.rs
-      if [ -z "$f" ]; then echo "(no src/lib.rs found -- skipping pub-item heuristic)"
-      elif [ -n "$last_commit" ] && git cat-file -e "${last_commit}:${f}" 2>/dev/null; then
-        diff <(git show "${last_commit}:${f}" | grep -E '^[[:space:]]*pub (fn|struct|enum|trait|const|mod|type) ' | sort) \
-             <(grep -E '^[[:space:]]*pub (fn|struct|enum|trait|const|mod|type) ' "$f" | sort) && echo "(no pub-item changes in $f)" || true
-        echo "(heuristic: top-level 'pub' items in $f only -- misses re-exports and nested modules)"
+      if [ -z "$f" ]; then
+        echo "(no src/lib.rs found -- skipping pub-item heuristic)"
+      elif [ -n "$last_commit" ] \
+          && git cat-file -e "${last_commit}:${f}" 2>/dev/null; then
+        diff <(git show "${last_commit}:${f}" | grep -E "$pub_re" | sort) \
+             <(grep -E "$pub_re" "$f" | sort) \
+          && echo "(no pub-item changes in $f)" || true
+        echo "(heuristic: top-level 'pub' items in $f only --" \
+          "misses re-exports and nested modules)"
       else
-        echo "($f absent at the comparison point -- treating all current pub items as new)"
-        grep -E '^[[:space:]]*pub (fn|struct|enum|trait|const|mod|type) ' "$f" || true
+        echo "($f absent at the comparison point --" \
+          "treating all current pub items as new)"
+        grep -E "$pub_re" "$f" || true
       fi ;;
     node)
       for cand in src/index.ts src/index.js index.ts index.js; do
         if [ -f "$cand" ]; then f="$cand"; break; fi
       done
-      if [ -z "$f" ]; then echo "(no index.ts/js entry point found -- skipping export heuristic)"
-      elif [ -n "$last_commit" ] && git cat-file -e "${last_commit}:${f}" 2>/dev/null; then
+      if [ -z "$f" ]; then
+        echo "(no index.ts/js entry point found -- skipping export heuristic)"
+      elif [ -n "$last_commit" ] \
+          && git cat-file -e "${last_commit}:${f}" 2>/dev/null; then
         diff <(git show "${last_commit}:${f}" | grep -E '^export ' | sort) \
-             <(grep -E '^export ' "$f" | sort) && echo "(no top-level export changes in $f)" || true
-        echo "(heuristic: top-level 'export' statements in $f only -- misses re-exports via barrel files)"
+             <(grep -E '^export ' "$f" | sort) \
+          && echo "(no top-level export changes in $f)" || true
+        echo "(heuristic: top-level 'export' statements in $f only --" \
+          "misses re-exports via barrel files)"
       else
-        echo "($f absent at the comparison point -- treating all current exports as new)"
+        echo "($f absent at the comparison point --" \
+          "treating all current exports as new)"
         grep -E '^export ' "$f" || true
       fi ;;
     python|python-setuptools)
-      f="$(git ls-files -- '*__init__.py' | xargs grep -l '__all__' 2>/dev/null | head -1 || true)"
-      if [ -z "$f" ]; then echo "(no __init__.py with __all__ found -- skipping export heuristic)"
-      elif [ -n "$last_commit" ] && git cat-file -e "${last_commit}:${f}" 2>/dev/null; then
-        diff <(git show "${last_commit}:${f}" | grep -A50 '^__all__' | sed '/^\]/q') \
-             <(grep -A50 '^__all__' "$f" | sed '/^\]/q') && echo "(no __all__ changes in $f)" || true
+      f="$(git ls-files -- '*__init__.py' | xargs grep -l '__all__' \
+        2>/dev/null | head -1 || true)"
+      if [ -z "$f" ]; then
+        echo "(no __init__.py with __all__ found -- skipping export heuristic)"
+      elif [ -n "$last_commit" ] \
+          && git cat-file -e "${last_commit}:${f}" 2>/dev/null; then
+        diff <(git show "${last_commit}:${f}" | grep -A50 '^__all__' \
+                 | sed '/^\]/q') \
+             <(grep -A50 '^__all__' "$f" | sed '/^\]/q') \
+          && echo "(no __all__ changes in $f)" || true
         echo "(heuristic: __all__ block in $f only)"
       else
-        echo "($f absent at the comparison point -- treating current __all__ as new)"
+        echo "($f absent at the comparison point --" \
+          "treating current __all__ as new)"
       fi ;;
     *)
-      echo "(no automated public-API diff for project type '$proj_type' -- read the commit log yourself for breaking/additive changes)" ;;
+      echo "(no automated public-API diff for project type '$proj_type' --" \
+        "read the commit log yourself for breaking/additive changes)" ;;
   esac
 }
 
@@ -670,17 +868,22 @@ write_primary() { # old new
     r) OLDV="$o" NEWV="$n" perl -pi -e 'BEGIN{$o=$ENV{OLDV};$n=$ENV{NEWV}} if(!$d && s/^(Version:\s*)\Q$o\E(\s*)$/$1$n$2/){$d=1}' -- "$manifest" ;;
     rust) toml_table_set "$manifest" "[package]" version "$o" "$n" ;;
     node) json_top_set "$manifest" "$o" "$n" ;;
-    php) if [ -z "$tag_derived" ]; then json_top_set "$manifest" "$o" "$n"; fi ;;
-    python) toml_table_set "$manifest" "[project] [tool.poetry]" version "$o" "$n" ;;
+    php)
+      if [ -z "$tag_derived" ]; then json_top_set "$manifest" "$o" "$n"; fi ;;
+    python)
+      toml_table_set "$manifest" "[project] [tool.poetry]" version "$o" "$n" ;;
     python-setuptools)
-      if [ "$manifest" = "setup.py" ]; then lit_set setup.py '(?<![A-Za-z_])version' "$o" "$n"
+      if [ "$manifest" = "setup.py" ]; then
+        lit_set setup.py '(?<![A-Za-z_])version' "$o" "$n"
       else ini_set "$manifest" "[metadata]" version "$o" "$n"; fi ;;
     ruby)
-      if [ "$ver_file" = "$manifest" ]; then lit_set "$ver_file" '[.]version' "$o" "$n"
+      if [ "$ver_file" = "$manifest" ]; then
+        lit_set "$ver_file" '[.]version' "$o" "$n"
       else lit_set "$ver_file" '(?<![A-Za-z_])VERSION' "$o" "$n"; fi ;;
     maven) pom_set "$manifest" "$o" "$n" ;;
     generic) printf '%s\n' "$n" > "$manifest" ;;
-    go) : ;; # version lives in a git tag; module-path rewrite handled separately
+    # version lives in a git tag; module-path rewrite handled separately
+    go) : ;;
   esac
 }
 
@@ -693,10 +896,14 @@ write_secondary() { # file old new
 
 is_bad_also_target() { # path -> reason on stdout if not allowed
   local f="$1"
-  git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || { echo "not a tracked file"; return 0; }
+  git ls-files --error-unmatch -- "$f" >/dev/null 2>&1 \
+    || { echo "not a tracked file"; return 0; }
   [ -L "$f" ] && { echo "is a symlink"; return 0; }
-  git ls-files -- . "${excl[@]}" | grep -qxF "$f" || { echo "is a changelog/lockfile/build path (excluded by design)"; return 0; }
-  git grep -qI -e . -- "$f" 2>/dev/null || { echo "is binary or empty"; return 0; }
+  git ls-files -- . "${excl[@]}" | grep -qxF "$f" \
+    || { echo "is a changelog/lockfile/build path (excluded by design)"
+         return 0; }
+  git grep -qI -e . -- "$f" 2>/dev/null \
+    || { echo "is binary or empty"; return 0; }
   return 0
 }
 
@@ -714,7 +921,10 @@ go_new_path() { # newver -> module path for that major
   if [ "$maj" -ge 2 ]; then echo "$base/v$maj"; else echo "$base"; fi
 }
 
-go_files_with_path() { git grep -lIF -e "\"$gomod_path" -- '*.go' ':(exclude,glob)**/vendor/**' 2>/dev/null || true; }
+go_files_with_path() {
+  git grep -lIF -e "\"$gomod_path" -- '*.go' ':(exclude,glob)**/vendor/**' \
+    2>/dev/null || true
+}
 
 go_rewrite() { # oldpath newpath
   OLDP="$1" NEWP="$2" perl -pi -e 'BEGIN{$o=$ENV{OLDP};$n=$ENV{NEWP}} s{^(module\s+)\Q$o\E(\s*)$}{$1$n$2}' go.mod
@@ -727,7 +937,8 @@ go_rewrite() { # oldpath newpath
 # ================================================================ commands ====
 dirty_warn() {
   if git status --porcelain --untracked-files=no | grep -q .; then
-    echo "WARNING: the working tree has uncommitted changes; they will be mixed into 'git diff' after the bump."
+    echo "WARNING: the working tree has uncommitted changes; they will be" \
+      "mixed into 'git diff' after the bump."
   fi
 }
 
@@ -736,26 +947,39 @@ case "$cmd" in
 scan)
   detect; build_excludes; read_version
   scan_rc=0
-  echo "Detected project type: $proj_type  (manifest: $manifest${ver_file:+; version read from $ver_file})"
+  echo "Detected project type: $proj_type" \
+    " (manifest: $manifest${ver_file:+; version read from $ver_file})"
   echo "Scheme: $scheme  (format and bump rules: references/conventions.md)"
   oth="$(other_manifests)"
-  if [ -n "$oth" ]; then echo "NOTE: also found:$oth -- if this is the wrong ecosystem, re-run with --type= / --manifest="; fi
-  echo "Current version: ${ver:-<none>}${tag_derived:+  (derived from a git tag; this skill writes no tag)}"
+  if [ -n "$oth" ]; then
+    echo "NOTE: also found:$oth -- if this is the wrong ecosystem, re-run" \
+      "with --type= / --manifest="
+  fi
+  tagnote="  (derived from a git tag; this skill writes no tag)"
+  echo "Current version: ${ver:-<none>}${tag_derived:+$tagnote}"
   if [ -n "$why" ]; then echo "UNSUPPORTED: $why"; scan_rc=3; fi
   if [ -n "$ver" ] && [ -z "$why" ]; then
     rc=0; out="$(scheme_next "$ver" check)" || rc=$?
     if [ "$rc" -ne 0 ]; then
-      echo "UNSUPPORTED: $out"; echo "STOP: do not guess how to bump this; ask the user for the exact new version or fix the format first."
+      echo "UNSUPPORTED: $out"
+      echo "STOP: do not guess how to bump this; ask the user for the exact" \
+        "new version or fix the format first."
       scan_rc=3
     else
       echo "Bump candidates (computed by the script; do not recompute by hand):"
       for k in $(kinds_for "$scheme"); do
         rc=0; out="$(scheme_next "$ver" "$k")" || rc=$?
-        mark=""; case "$k" in major|release) mark="   [user-only: never propose, ask]" ;; esac
-        if [ "$rc" -eq 0 ]; then echo "  $k -> $out$mark"; else echo "  $k -> n/a ($out)"; fi
+        mark=""
+        case "$k" in
+          major|release) mark="   [user-only: never propose, ask]" ;;
+        esac
+        if [ "$rc" -eq 0 ]; then echo "  $k -> $out$mark"
+        else echo "  $k -> n/a ($out)"; fi
       done
       if [ "$proj_type" = rust ] && [[ $ver =~ ^0\. ]]; then
-        echo "NOTE (Cargo, 0.y.z): a breaking change bumps y (use 'minor'); additive/fix changes bump z (use 'patch'); 0.0.z: every change is breaking."
+        echo "NOTE (Cargo, 0.y.z): a breaking change bumps y (use 'minor');" \
+          "additive/fix changes bump z (use 'patch'); 0.0.z: every change" \
+          "is breaking."
       fi
     fi
   fi
@@ -767,11 +991,13 @@ scan)
     echo "--- Commit of the latest version tag ($tagname) ---"
   else
     pattern="$(version_line_pattern)"
-    last_bump_commit="$(git log -G "$pattern" --format='%H' -- "$ver_file" | head -1)" || true
+    last_bump_commit="$(git log -G "$pattern" --format='%H' -- "$ver_file" \
+      | head -1)" || true
     echo "--- Last commit that changed the version field in $ver_file ---"
   fi
   if [ -z "${last_bump_commit:-}" ]; then
-    echo "(none found -- version has never been bumped; using full repo history)"
+    echo "(none found -- version has never been bumped;" \
+      "using full repo history)"
     range="$(git rev-list --max-parents=0 HEAD | tail -1)..HEAD"
   else
     echo "$last_bump_commit"; range="${last_bump_commit}..HEAD"
@@ -784,14 +1010,17 @@ scan)
   api_diff "${last_bump_commit:-}"
   echo
 
-  echo "--- Other tracked occurrences of \"${ver:-?}\" (NOT changed by apply unless named with --also) ---"
+  echo "--- Other tracked occurrences of \"${ver:-?}\" (NOT changed by apply" \
+    "unless named with --also) ---"
   if [ -n "$ver" ]; then
     hits="$(occurrences "$ver" "$(skip_list)")"
     if [ -z "$hits" ]; then echo "(none)"; else
       printf '%s\n' "$hits" | awk 'NR<=40'
       n_hits="$(printf '%s\n' "$hits" | awk 'END{print NR}')"
       if [ "$n_hits" -gt 40 ]; then echo "... and $((n_hits-40)) more"; fi
-      echo "(dependency pins of other packages, dates, fixtures and sample data show up here too: review each line before adding its file with --also=<path>)"
+      echo "(dependency pins of other packages, dates, fixtures and sample" \
+        "data show up here too: review each line before adding its file" \
+        "with --also=<path>)"
     fi
   else
     echo "(skipped -- no version parsed)"
@@ -800,17 +1029,29 @@ scan)
 
   found_changelog=""
   for f in NEWS.md CHANGELOG.md CHANGES.md HISTORY.md; do
-    if [ -f "$f" ]; then echo "NOTE: $f exists -- never rewrite its past version headers; apply excludes it."; found_changelog=1; fi
+    if [ -f "$f" ]; then
+      echo "NOTE: $f exists -- never rewrite its past version headers;" \
+        "apply excludes it."
+      found_changelog=1
+    fi
   done
-  if [ -z "$found_changelog" ]; then echo "NOTE: no changelog file (NEWS.md/CHANGELOG.md/CHANGES.md/HISTORY.md) yet -- ask the user which to create before recording this change."; fi
+  if [ -z "$found_changelog" ]; then
+    cl_names="NEWS.md/CHANGELOG.md/CHANGES.md/HISTORY.md"
+    echo "NOTE: no changelog file ($cl_names) yet -- ask the user which to" \
+      "create before recording this change."
+  fi
   echo
 
   echo "--- Out-of-sync check (secondary version locations) ---"
   check_sync "$ver" 1
-  if [ -z "$sync_report" ]; then echo "(no conventional secondary version location for type '$proj_type', or none found in this repo)"
+  if [ -z "$sync_report" ]; then
+    echo "(no conventional secondary version location for type" \
+      "'$proj_type', or none found in this repo)"
   else printf '%s' "$sync_report"; fi
   if [ "$sync_bad" -gt 0 ]; then
-    echo "STOP: $ver_file is the source of truth here -- confirm with the user which value is correct before bumping anything. 'apply' refuses to run until this is resolved (or overridden with --force)."
+    echo "STOP: $ver_file is the source of truth here -- confirm with the" \
+      "user which value is correct before bumping anything. 'apply' refuses" \
+      "to run until this is resolved (or overridden with --force)."
     if [ "$scan_rc" -eq 0 ]; then scan_rc=2; fi
   fi
   exit "$scan_rc"
@@ -824,21 +1065,33 @@ apply)
   echo "Project type: $proj_type   scheme: $scheme"
 
   if [ -n "$why" ]; then die 3 "UNSUPPORTED: $why"; fi
-  if [ -z "$ver" ]; then die 3 "UNSUPPORTED: could not read a version from $ver_file"; fi
-  if [ "$old" != "$ver" ]; then die 2 "ABORTING: <old> \"$old\" is not the current version \"$ver\" ($ver_file). Nothing was changed."; fi
+  if [ -z "$ver" ]; then
+    die 3 "UNSUPPORTED: could not read a version from $ver_file"
+  fi
+  if [ "$old" != "$ver" ]; then
+    die 2 "ABORTING: <old> \"$old\" is not the current version \"$ver\"" \
+      "($ver_file). Nothing was changed."
+  fi
   rc=0; out="$(scheme_next "$old" check)" || rc=$?
   if [ "$rc" -ne 0 ]; then die 3 "UNSUPPORTED current version: $out"; fi
   rc=0; out="$(scheme_next "$new" check)" || rc=$?
-  if [ "$rc" -ne 0 ]; then die 3 "INVALID new version for scheme $scheme: $out"; fi
-  if [ "$new" = "$old" ]; then die 2 "ABORTING: new version equals the old one."; fi
+  if [ "$rc" -ne 0 ]; then
+    die 3 "INVALID new version for scheme $scheme: $out"
+  fi
+  if [ "$new" = "$old" ]; then
+    die 2 "ABORTING: new version equals the old one."
+  fi
 
   check_sync "$old" 1
   if [ "$sync_bad" -gt 0 ]; then
     if [ -z "$force" ]; then
       printf '%s' "$sync_report" >&2
-      die 2 "ABORTING: out-of-sync version locations. Resolve the mismatch first, or re-run with --force if the user confirmed $ver_file is correct and the other location will be fixed separately."
+      die 2 "ABORTING: out-of-sync version locations. Resolve the mismatch" \
+        "first, or re-run with --force if the user confirmed $ver_file is" \
+        "correct and the other location will be fixed separately."
     fi
-    echo "WARNING (--force): proceeding despite out-of-sync locations:"; printf '%s' "$sync_report" | grep -v '^OK' || true
+    echo "WARNING (--force): proceeding despite out-of-sync locations:"
+    printf '%s' "$sync_report" | grep -v '^OK' || true
   fi
   dirty_warn
 
@@ -862,22 +1115,29 @@ apply)
     if [ "$go_new_path_v" != "$gomod_path" ]; then go_old_path="$gomod_path"; fi
   fi
 
-  # Refuse symlinks and dash-leading names: writes through `>` follow symlinks, and
-  # a name like -Mfoo__init__.py would otherwise be parsed as an option.
+  # Refuse symlinks and dash-leading names: writes through `>` follow
+  # symlinks, and a name like -Mfoo__init__.py would otherwise be parsed as
+  # an option.
   for t in ${edits[@]+"${edits[@]}"} ${also_files[@]+"${also_files[@]}"} \
-           $( [ -n "$go_old_path" ] && { echo go.mod; go_files_with_path; } ); do
+           $( [ -n "$go_old_path" ] &&
+              { echo go.mod; go_files_with_path; } ); do
     case "$t" in -*) die 2 "refusing to write $t: name starts with '-'" ;; esac
     [ -L "$t" ] && die 2 "refusing to write $t: it is a symlink"
   done
 
   verb="update"; vrw="rewrite"
-  if [ -n "$dry" ]; then echo "DRY RUN -- nothing will be written."; verb="would update"; vrw="would rewrite"; fi
+  if [ -n "$dry" ]; then
+    echo "DRY RUN -- nothing will be written."
+    verb="would update"; vrw="would rewrite"
+  fi
   for f in ${edits[@]+"${edits[@]}"}; do
     echo "$verb: $f   ($old -> $new)"
   done
   for f in ${also_files[@]+"${also_files[@]}"}; do
     echo "$verb: $f   (--also, whole-token matches only)"
-    if [ -n "$dry" ]; then occurrences "$old" "" | awk -F: -v f="$f" '$1==f' | sed 's/^/    /'; fi
+    if [ -n "$dry" ]; then
+      occurrences "$old" "" | awk -F: -v f="$f" '$1==f' | sed 's/^/    /'
+    fi
   done
   if [ -n "$go_old_path" ]; then
     echo "$vrw: go.mod module path  $go_old_path -> $go_new_path_v"
@@ -888,27 +1148,40 @@ apply)
   # ---- write ----
   if [ -z "$tag_derived" ]; then write_primary "$old" "$new"; fi
   if [ -n "$sec_edit" ]; then
-    while IFS= read -r f; do write_secondary "$f" "$old" "$new"; done <<< "$sec_edit"
+    while IFS= read -r f; do
+      write_secondary "$f" "$old" "$new"
+    done <<< "$sec_edit"
   fi
-  for f in ${also_files[@]+"${also_files[@]}"}; do also_replace "$f" "$old" "$new"; done
+  for f in ${also_files[@]+"${also_files[@]}"}; do
+    also_replace "$f" "$old" "$new"
+  done
   if [ -n "$go_old_path" ]; then go_rewrite "$go_old_path" "$go_new_path_v"; fi
 
   # ---- post-check ----
   if [ -z "$tag_derived" ]; then
     read_version
     if [ "$ver" != "$new" ]; then
-      die 2 "POST-CHECK FAILED: $ver_file now reads \"${ver:-<none>}\", expected \"$new\". Files above were modified; inspect with git diff."
+      die 2 "POST-CHECK FAILED: $ver_file now reads \"${ver:-<none>}\"," \
+        "expected \"$new\". Files above were modified; inspect with git diff."
     fi
   fi
   locks="$(git grep -lIF -e "$old" -- "${lockspec[@]}" 2>/dev/null || true)"
   if [ -n "$locks" ]; then
-    echo; echo "NOTE: left these lockfiles untouched (regenerate via your package manager: npm install, cargo generate-lockfile, poetry lock, bundle lock, composer update --lock):"
+    echo
+    echo "NOTE: left these lockfiles untouched (regenerate via your package" \
+      "manager: npm install, cargo generate-lockfile, poetry lock, bundle" \
+      "lock, composer update --lock):"
     echo "$locks"
   fi
   if [ "$tag_derived" = 1 ]; then
-    echo; echo "NOTE: this version is a git tag. No tag was created; the user creates ${tag_prefix}${new#v} themselves (Go/Composer tags are the release)."
+    echo
+    echo "NOTE: this version is a git tag. No tag was created; the user" \
+      "creates ${tag_prefix}${new#v} themselves (Go/Composer tags are the" \
+      "release)."
   fi
-  echo; echo "Done. Next: 'verify $old $new', then 'git diff'. No commit or tag was made."
+  echo
+  echo "Done. Next: 'verify $old $new', then 'git diff'. No commit or tag" \
+    "was made."
   ;;
 
 # ----------------------------------------------------------------- verify ----
@@ -919,16 +1192,26 @@ verify)
   bad=0
   if [ -z "$tag_derived" ]; then
     if [ "$ver" = "$new" ]; then echo "OK: $ver_file says \"$new\""
-    else echo "FAIL: $ver_file says \"${ver:-<none>}\", expected \"$new\""; bad=1; fi
+    else
+      echo "FAIL: $ver_file says \"${ver:-<none>}\", expected \"$new\""
+      bad=1
+    fi
   else
-    echo "NOTE: version is tag-derived; confirm the tag \"${tag_prefix}${new#v}\" yourself (this skill never tags)."
+    echo "NOTE: version is tag-derived; confirm the tag" \
+      "\"${tag_prefix}${new#v}\" yourself (this skill never tags)."
   fi
   check_sync "$new" 0
   printf '%s' "$sync_report"
   if [ "$sync_bad" -gt 0 ]; then bad=1; fi
-  echo "--- Remaining whole-token occurrences of \"$old\" (excluding changelogs/lockfiles/build dirs) ---"
+  echo "--- Remaining whole-token occurrences of \"$old\"" \
+    "(excluding changelogs/lockfiles/build dirs) ---"
   hits="$(occurrences "$old" "$(skip_list)")"
-  if [ -z "$hits" ]; then echo "(none)"; else printf '%s\n' "$hits" | awk 'NR<=40'; echo "(review: stale references, or other packages' pins that correctly stay)"; fi
+  if [ -z "$hits" ]; then echo "(none)"
+  else
+    printf '%s\n' "$hits" | awk 'NR<=40'
+    echo "(review: stale references, or other packages' pins that" \
+      "correctly stay)"
+  fi
   if [ "$bad" -ne 0 ]; then exit 2; fi
   ;;
 esac

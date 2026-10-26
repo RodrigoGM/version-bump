@@ -7,10 +7,11 @@ separate from SKILL.md so ecosystem detail can grow without bloating what
 loads on every invocation.
 
 ## Contents
-1. [How a version is decided: type → scheme](#how-a-version-is-decided-type--scheme)
+1. [Type → scheme](#how-a-version-is-decided-type--scheme)
 2. [Project-type detection](#project-type-detection)
 3. [Schemes (format + bump rules)](#schemes-format--bump-rules)
-4. [Ecosystem notes](#ecosystem-notes) — Node · Rust · Python · R · Ruby · Go · Maven · PHP/Composer · plain VERSION file
+4. [Ecosystem notes](#ecosystem-notes) — Node · Rust · Python · R · Ruby
+   · Go · Maven · PHP/Composer · plain VERSION file
 5. [Out-of-sync secondary locations](#out-of-sync-secondary-locations)
 6. [What `apply` writes (and does not)](#what-apply-writes-and-does-not)
 7. [API-diff fidelity](#api-diff-fidelity-by-ecosystem)
@@ -50,32 +51,47 @@ found so a wrong pick (e.g. `package.json` used only for tooling next to a
 `go.mod`) is visible.
 
 <!-- types:start -->
-| Type | Detected by | Version is read from |
-|---|---|---|
-| `r` | `DESCRIPTION` | `Version:` line |
-| `rust` | `Cargo.toml` | `version =` under `[package]` |
-| `node` | `package.json` | top-level `"version"` (brace depth 1) |
-| `python` | `pyproject.toml` with `[project]`/`[tool.poetry]` | `version =` in that table |
-| `python-setuptools` | `setup.cfg` / `setup.py` (also when `pyproject.toml` has only `[build-system]`) | `[metadata] version =` / `version="..."` literal |
-| `ruby` | `*.gemspec` | quoted `.version =` in the gemspec, else `VERSION = "…"` in `lib/<gem>/version.rb` (dashes in the gem name become `/`) |
-| `php` | `composer.json` | `"version"` if present, else the latest reachable git tag |
-| `go` | `go.mod` (root only) | latest reachable `v*` git tag |
-| `maven` | `pom.xml` | the project's own `<version>` (direct child of the root element) |
-| `generic` | `VERSION` | first line |
+- `r` — detected by `DESCRIPTION`; read from the `Version:` line.
+- `rust` — `Cargo.toml`; `version =` under `[package]`.
+- `node` — `package.json`; top-level `"version"` (brace depth 1).
+- `python` — `pyproject.toml` with `[project]` or `[tool.poetry]`;
+  `version =` in that table.
+- `python-setuptools` — `setup.cfg` / `setup.py` (also when
+  `pyproject.toml` has only `[build-system]`); `[metadata] version =` or a
+  `version="..."` literal.
+- `ruby` — `*.gemspec`; the quoted `.version =` in the gemspec, else
+  `VERSION = "…"` in `lib/<gem>/version.rb` (dashes in the gem name become
+  `/`).
+- `php` — `composer.json`; `"version"` if present, else the latest
+  reachable git tag.
+- `go` — `go.mod` (root only); the latest reachable `v*` git tag.
+- `maven` — `pom.xml`; the project's own `<version>` (direct child of the
+  root element).
+- `generic` — `VERSION`; first line.
 <!-- types:end -->
 
 ## Schemes (format + bump rules)
 
 <!-- schemes:start -->
-| Scheme | Used by | Accepted grammar | Kinds the script computes |
-|---|---|---|---|
-| `semver` | node, rust, generic | `X.Y.Z[-pre.id…]` (SemVer 2.0). `+build` → exit 3 | `patch` `minor` `major*` `prerelease` `release*` |
-| `pep440` | python | `[N!]X.Y.Z[aN\|bN\|rcN][.postN][.devN]`, lowercase, normalized, no `+local` | `patch` `minor` `major*` `pre` `dev` `release*` |
-| `rver` | r | `X.Y.Z` or `X.Y.Z.<dev>` (dot form; `.9000` = development) | `patch` `minor` `major*` `dev` |
-| `rubygems` | ruby | `X.Y.Z` or `X.Y.Z.<letters>[N]` / `X.Y.Z.<letters>.N` | `patch` `minor` `major*` `prerelease` `release*` |
-| `gomod` | go | `vX.Y.Z[-pre]` (leading `v`); no `+incompatible`, no pseudo-versions | `patch` `minor` `major*` `prerelease` `release*` |
-| `maven` | maven | `X.Y.Z[-SNAPSHOT]` | `patch` `minor` `major*` `snapshot` `release*` |
-| `composer` | php | SemVer with optional leading `v` | `patch` `minor` `major*` `prerelease` `release*` |
+Each entry: scheme, used by, accepted grammar, kinds the script computes.
+
+- `semver` — node, rust, generic. `X.Y.Z[-pre.id…]` (SemVer 2.0);
+  `+build` → exit 3. Kinds: `patch` `minor` `major*` `prerelease`
+  `release*`.
+- `pep440` — python. `[N!]X.Y.Z[aN|bN|rcN][.postN][.devN]`, lowercase,
+  normalized, no `+local`. Kinds: `patch` `minor` `major*` `pre` `dev`
+  `release*`.
+- `rver` — r. `X.Y.Z` or `X.Y.Z.<dev>` (dot form; `.9000` = development).
+  Kinds: `patch` `minor` `major*` `dev`.
+- `rubygems` — ruby. `X.Y.Z` or `X.Y.Z.<letters>[N]` /
+  `X.Y.Z.<letters>.N`. Kinds: `patch` `minor` `major*` `prerelease`
+  `release*`.
+- `gomod` — go. `vX.Y.Z[-pre]` (leading `v`); no `+incompatible`, no
+  pseudo-versions. Kinds: `patch` `minor` `major*` `prerelease` `release*`.
+- `maven` — maven. `X.Y.Z[-SNAPSHOT]`. Kinds: `patch` `minor` `major*`
+  `snapshot` `release*`.
+- `composer` — php. SemVer with optional leading `v`. Kinds: `patch`
+  `minor` `major*` `prerelease` `release*`.
 <!-- schemes:end -->
 
 `*` = user-only (see rules above). A kind that does not apply to the current
@@ -105,18 +121,20 @@ checked against.
   0.x note only for Rust.
 
 ### Rust / Cargo (`semver`)
-- SemVer with Cargo's 0.x convention (doc.rust-lang.org/cargo/reference/semver.html):
-  for `0.y.z`, a change in `y` may be treated as breaking and `z` as
-  compatible; `0.0.z` releases are always breaking. So below 1.0 a **breaking
-  change is a `minor` bump and additive/fix changes are `patch`**. `scan`
-  prints this note for `0.x` crates.
+- SemVer with Cargo's 0.x convention
+  (doc.rust-lang.org/cargo/reference/semver.html): for `0.y.z`, a change
+  in `y` may be treated as breaking and `z` as compatible; `0.0.z`
+  releases are always breaking. So below 1.0 a **breaking change is a
+  `minor` bump and additive/fix changes are `patch`**. `scan` prints this
+  note for `0.x` crates.
 - `version.workspace = true` (inherited) → exit 3; re-run with
   `--manifest=<workspace root>/Cargo.toml`.
 - `Cargo.lock` is checked for the crate's own entry and never edited
   (`cargo generate-lockfile` / any build resyncs it).
 
 ### Python (`pep440`)
-PEP 440 is **not SemVer** (packaging.python.org/specifications/version-specifiers):
+PEP 440 is **not SemVer**
+(packaging.python.org/specifications/version-specifiers):
 - Grammar: `[N!]N(.N)*[{a|b|rc}N][.postN][.devN]`. Pre-releases have no
   separator (`1.2.0rc1`, never `1.2.0-rc.1`); `.devN` sorts *before* the
   release it precedes; `.postN` sorts after it.
@@ -238,14 +256,15 @@ primary and reports `MISMATCH`/`UNPARSEABLE`; **`scan` exits 2** and
 `apply` refuses (exit 2) unless `--force`. An unparseable secondary counts as
 a mismatch (it does not fail open).
 
-| Type | Secondary location checked | Edited by `apply`? |
-|---|---|---|
-| `ruby` | the other of gemspec literal / `version.rb` | yes |
-| `python` | `__version__ = "…"` literals (see Python note) | yes |
-| `node` | root `"version"` in `package-lock.json`, `npm-shrinkwrap.json` | no (regenerate) |
-| `rust` | the crate's own entry in `Cargo.lock` | no (regenerate) |
-| `go` | `go.mod` module-path `/vN` suffix vs the tag's major | yes (rewrite) |
-| `r`, `php`, `maven`, `generic` | none | — |
+Secondary location checked per type, and whether `apply` edits it:
+- `ruby` — the other of gemspec literal / `version.rb`. Edited.
+- `python` — `__version__ = "…"` literals (see Python note). Edited.
+- `node` — root `"version"` in `package-lock.json` and
+  `npm-shrinkwrap.json`. Not edited (regenerate).
+- `rust` — the crate's own entry in `Cargo.lock`. Not edited (regenerate).
+- `go` — `go.mod` module-path `/vN` suffix vs the tag's major. Edited
+  (rewrite).
+- `r`, `php`, `maven`, `generic` — none.
 
 **If scan reports a mismatch, stop.** Show the user both values and which
 file is authoritative (the primary), and ask them to fix the secondary or to
@@ -331,10 +350,14 @@ its existing style** (R's `NEWS.md` from usethis uses `# pkg 0.1.1` /
 
   All notable changes to this project will be documented in this file.
 
-  The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-  and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+  The format is based on [Keep a Changelog][kac],
+  and this project adheres to [Semantic Versioning][semver].
+
+  [kac]: https://keepachangelog.com/en/1.1.0/
+  [semver]: https://semver.org/spec/v2.0.0.html
   ```
-  (For non-SemVer ecosystems say "adheres to the versioning scheme of <ecosystem>" instead.)
+  (For non-SemVer ecosystems say "adheres to the versioning scheme of
+  <ecosystem>" instead.)
 - Never rewrite past version headers; `apply` excludes changelog files.
 
 ## Gotchas
