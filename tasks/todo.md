@@ -27,3 +27,21 @@ Status as of 2026-10-26.
       wrapped; 112/112 tests pass. Skipped by instruction: shell commands
       (README.md:35, SKILL.md:83) and 18 inline awk/perl program lines in
       `scripts/version_bump.sh`. Open: wrap those awk lines too?
+
+## Open questions (awaiting decision)
+- [ ] Q1. **Commit email.** All 4 pushed commits and the local `v1.0.0` tag
+      carry the work email from the global git config. Choose: (1) leave it;
+      (2) set a repo-local `user.email` (personal or GitHub no-reply
+      address) for future commits only; (3) also rewrite history and
+      force-push (changes hashes; old email stays in caches and clones).
+- [x] Q2. **Push the `v1.0.0` tag.** Created on `4a72a32` and pushed. It
+      carries the work email (see Q1).
+- [ ] Q3. **Create a GitHub release for `v1.0.0`?** A release is a page on
+      top of a tag: release notes, "Latest" badge, source archives,
+      optional files, watcher notifications.
+      (`gh release create v1.0.0 --notes "..."`).
+- [x] Q4. **Inline awk/perl lines:** keep the one-liner exception; do not
+      wrap them.
+- [x] Q5. **`tasks/` stays in the public repo** (sanitized, reviewed).
+- [ ] Lesson to add to `tasks/lessons.md`: audits must include git
+      metadata (author/committer emails, tag taggers), not just files.
